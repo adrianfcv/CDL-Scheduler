@@ -1,0 +1,668 @@
+'use client'
+
+import { useState, useEffect, useCallback } from 'react'
+import Link from 'next/link'
+import Image from 'next/image'
+
+const SHIFTS = ['Morning', 'Afternoon', 'Evening', 'Saturday']
+const TRAINING_TYPES = ['Class A', 'Refresher', 'Gooseneck', 'Other']
+
+export default function Dashboard() {
+  const [instructors, setInstructors] = useState([])
+  const [students, setStudents] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [showAddInstructor, setShowAddInstructor] = useState(false)
+  const [showAddStudent, setShowAddStudent] = useState(false)
+  const [assigningStudent, setAssigningStudent] = useState(null)
+  const [editingAssignment, setEditingAssignment] = useState(null)
+  const [editingInstructor, setEditingInstructor] = useState(null)
+
+  const loadData = useCallback(async () => {
+    const [instrRes, studRes] = await Promise.all([
+      fetch('/api/instructors'),
+      fetch('/api/students'),
+    ])
+    setInstructors(await instrRes.json())
+    setStudents(await studRes.json())
+    setLoading(false)
+  }, [])
+
+  useEffect(() => { loadData() }, [loadData])
+
+  const today = new Date().toISOString().split('T')[0]
+
+  const toAssignmentArray = (s) => s.assignments ? [s.assignments] : []
+  const unassigned = students.filter(s => !s.assignments)
+
+  const byShift = SHIFTS.reduce((acc, shift) => {
+    acc[shift] = students
+      .flatMap(s => toAssignmentArray(s).map(a => ({ ...a, student: s })))
+      .filter(a => a.shift === shift && a.start_date <= today && a.end_date >= today)
+    return acc
+  }, {})
+
+  const instructorActiveShifts = {}
+  students.forEach(s => {
+    const a = s.assignments
+    if (!a || !a.start_date || !a.end_date) return
+    if (a.start_date <= today && a.end_date >= today) {
+      if (!instructorActiveShifts[a.instructor_id]) {
+        instructorActiveShifts[a.instructor_id] = new Set()
+      }
+      instructorActiveShifts[a.instructor_id].add(a.shift)
+    }
+  })
+
+  async function updateInstructor(instructorId, values) {
+    const res = await fetch(`/api/instructors/${instructorId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: values.name,
+        capacity: parseInt(values.capacity),
+        default_shift: values.default_shift || null,
+      }),
+    })
+    if (!res.ok) {
+      const { error } = await res.json()
+      return { error }
+    }
+    setEditingInstructor(null)
+    loadData()
+    return {}
+  }
+
+  async function updateAssignment(assignmentId, instructorId, shift, startDate, endDate) {
+    const res = await fetch(`/api/assignments/${assignmentId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ instructor_id: instructorId, shift, start_date: startDate, end_date: endDate }),
+    })
+    if (!res.ok) {
+      const { error } = await res.json()
+      return { error }
+    }
+    setEditingAssignment(null)
+    loadData()
+    return {}
+  }
+
+  async function assignStudent(studentId, instructorId, shift, startDate, endDate) {
+    const res = await fetch('/api/assignments', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ student_id: studentId, instructor_id: instructorId, shift, start_date: startDate, end_date: endDate }),
+    })
+    if (!res.ok) {
+      const { error } = await res.json()
+      return { error }
+    }
+    setAssigningStudent(null)
+    loadData()
+    return {}
+  }
+
+  async function addInstructor(values) {
+    await fetch('/api/instructors', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: values.name, capacity: parseInt(values.capacity), default_shift: values.default_shift || null }),
+    })
+    setShowAddInstructor(false)
+    loadData()
+  }
+
+  async function addStudent(values) {
+    await fetch('/api/students', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ first_name: values.first_name, last_name: values.last_name, phone: values.phone, email: values.email, training_type: values.training_type }),
+    })
+    setShowAddStudent(false)
+    loadData()
+  }
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-black">
+        <div className="text-center">
+          <div className="w-12 h-12 border-4 border-red-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-gray-400 text-sm">Loading...</p>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-100">
+
+      {/* Header */}
+      <header className="bg-black px-6 py-4 flex items-center justify-between shadow-lg">
+        <div className="flex items-center gap-6">
+          <div className="flex items-center gap-3">
+            <Image src="/logo.jpg" alt="The Trucking School" width={44} height={44} className="rounded-lg" />
+            <div>
+              <div className="text-white font-bold text-lg leading-tight">The Trucking School</div>
+              <div className="text-red-500 text-xs font-semibold tracking-widest uppercase">Scheduler</div>
+            </div>
+          </div>
+          <nav className="flex gap-1 ml-4">
+            <span className="text-sm font-medium text-white bg-red-600 px-3 py-1.5 rounded-md">Dashboard</span>
+            <Link href="/students" className="text-sm font-medium text-gray-400 hover:text-white px-3 py-1.5 rounded-md transition-colors">All Students</Link>
+            <Link href="/instructors" className="text-sm font-medium text-gray-400 hover:text-white px-3 py-1.5 rounded-md transition-colors">Instructors</Link>
+          </nav>
+        </div>
+        <div className="flex gap-3">
+          <button
+            onClick={() => setShowAddInstructor(true)}
+            className="px-4 py-2 text-sm bg-transparent border border-gray-600 text-gray-300 rounded-lg hover:border-gray-400 hover:text-white font-medium transition-colors"
+          >
+            + Instructor
+          </button>
+          <button
+            onClick={() => setShowAddStudent(true)}
+            className="px-4 py-2 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 font-medium transition-colors"
+          >
+            + Student
+          </button>
+        </div>
+      </header>
+
+      <main className="max-w-7xl mx-auto px-6 py-8 space-y-8">
+
+        {/* Instructor capacity */}
+        {instructors.length > 0 && (
+          <section>
+            <h2 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-4">Instructor Capacity</h2>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+              {instructors.map(instructor => {
+                const isFull = instructor.current_count >= instructor.capacity
+                const pct = Math.min((instructor.current_count / instructor.capacity) * 100, 100)
+                const activeShifts = instructorActiveShifts[instructor.id]
+                  ? [...instructorActiveShifts[instructor.id]]
+                  : []
+
+                return (
+                  <div key={instructor.id} className={`bg-white rounded-xl border-l-4 p-5 shadow-sm ${isFull ? 'border-l-red-600' : 'border-l-gray-900'}`}>
+                    <div className="flex items-start justify-between mb-3">
+                      <span className="font-bold text-gray-900">{instructor.name}</span>
+                      <button
+                        onClick={() => setEditingInstructor(instructor)}
+                        className="text-xs text-gray-400 hover:text-red-600 transition-colors"
+                      >
+                        Edit
+                      </button>
+                    </div>
+
+                    <div className="flex flex-wrap gap-1 mb-3">
+                      {activeShifts.length > 0
+                        ? activeShifts.map(shift => (
+                            <span key={shift} className="text-xs font-semibold bg-red-600 text-white px-2 py-0.5 rounded-full">
+                              {shift}
+                            </span>
+                          ))
+                        : instructor.default_shift
+                        ? <span className="text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">{instructor.default_shift}</span>
+                        : <span className="text-xs text-gray-300">No active students</span>
+                      }
+                    </div>
+
+                    <div className="flex items-end justify-between mb-2">
+                      <div>
+                        <span className="text-3xl font-black text-gray-900">{instructor.current_count}</span>
+                        <span className="text-sm text-gray-400 ml-1">/ {instructor.capacity}</span>
+                      </div>
+                      {isFull && (
+                        <span className="text-xs font-bold bg-red-100 text-red-600 px-2 py-0.5 rounded-full">FULL</span>
+                      )}
+                    </div>
+
+                    <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all ${isFull ? 'bg-red-600' : 'bg-gray-900'}`}
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </section>
+        )}
+
+        {/* Weekly schedule */}
+        <section>
+          <h2 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-4">This Week's Schedule</h2>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            {SHIFTS.map((shift, idx) => {
+              const assignments = byShift[shift]
+              const instructorMap = {}
+              assignments.forEach(a => {
+                const id = a.instructor_id
+                if (!instructorMap[id]) instructorMap[id] = { name: a.instructors?.name, count: 0 }
+                instructorMap[id].count++
+              })
+              const shiftInstructors = Object.values(instructorMap)
+              const shiftColors = ['border-t-red-600', 'border-t-gray-800', 'border-t-red-400', 'border-t-gray-600']
+
+              return (
+                <div key={shift} className={`bg-white rounded-xl border-t-4 ${shiftColors[idx]} shadow-sm overflow-hidden`}>
+                  <div className="px-4 py-3 border-b border-gray-100">
+                    <h3 className="font-black text-gray-900 uppercase tracking-wide text-sm">{shift}</h3>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      {assignments.length} student{assignments.length !== 1 ? 's' : ''} active
+                    </p>
+                  </div>
+
+                  {shiftInstructors.length > 0 && (
+                    <div className="px-4 py-2.5 bg-gray-50 border-b border-gray-100 space-y-1">
+                      {shiftInstructors.map(inst => (
+                        <div key={inst.name} className="flex items-center justify-between">
+                          <span className="text-xs font-semibold text-gray-700">{inst.name}</span>
+                          <span className="text-xs text-gray-400">{inst.count} student{inst.count !== 1 ? 's' : ''}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="divide-y divide-gray-100">
+                    {assignments.length === 0 ? (
+                      <div className="px-4 py-8 text-center text-xs text-gray-300 font-medium">
+                        No students this week
+                      </div>
+                    ) : (
+                      assignments.map(assignment => (
+                        <div key={assignment.id} className="px-4 py-3 hover:bg-gray-50 transition-colors">
+                          <div className="flex items-start justify-between">
+                            <div className="font-semibold text-gray-900 text-sm">
+                              {assignment.student.first_name} {assignment.student.last_name}
+                            </div>
+                            <button
+                              onClick={() => setEditingAssignment(assignment)}
+                              className="text-xs text-gray-400 hover:text-red-600 ml-2 shrink-0 transition-colors"
+                            >
+                              Edit
+                            </button>
+                          </div>
+                          <div className="text-xs text-gray-500 mt-0.5">{assignment.instructors?.name}</div>
+                          <div className="text-xs text-gray-400">{assignment.start_date} → {assignment.end_date}</div>
+                          {assignment.student.training_type && (
+                            <span className="inline-block mt-1.5 text-xs font-semibold bg-black text-white px-2 py-0.5 rounded-full">
+                              {assignment.student.training_type}
+                            </span>
+                          )}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </section>
+
+        {/* Unassigned students */}
+        {unassigned.length > 0 && (
+          <section>
+            <h2 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-4">
+              Unassigned Students ({unassigned.length})
+            </h2>
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 divide-y divide-gray-100">
+              {unassigned.map(student => (
+                <div key={student.id} className="flex items-center justify-between px-5 py-3 hover:bg-gray-50 transition-colors">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 bg-red-600 text-white rounded-full flex items-center justify-center text-xs font-bold shrink-0">
+                      {student.first_name[0]}{student.last_name[0]}
+                    </div>
+                    <div>
+                      <div className="text-sm font-semibold text-gray-900">{student.first_name} {student.last_name}</div>
+                      {student.training_type && <div className="text-xs text-gray-400">{student.training_type}</div>}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setAssigningStudent(student)}
+                    className="text-xs font-bold text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100 px-3 py-1.5 rounded-lg transition-colors"
+                  >
+                    Assign →
+                  </button>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+      </main>
+
+      {/* Modals */}
+      {showAddInstructor && (
+        <Modal title="Add Instructor" onClose={() => setShowAddInstructor(false)}>
+          <AddInstructorForm onSubmit={addInstructor} />
+        </Modal>
+      )}
+      {showAddStudent && (
+        <Modal title="Add Student" onClose={() => setShowAddStudent(false)}>
+          <AddStudentForm onSubmit={addStudent} />
+        </Modal>
+      )}
+      {editingInstructor && (
+        <EditInstructorModal
+          instructor={editingInstructor}
+          onSave={updateInstructor}
+          onClose={() => setEditingInstructor(null)}
+        />
+      )}
+      {assigningStudent && (
+        <AssignModal
+          student={assigningStudent}
+          instructors={instructors}
+          onAssign={assignStudent}
+          onClose={() => setAssigningStudent(null)}
+        />
+      )}
+      {editingAssignment && (
+        <EditAssignmentModal
+          assignment={editingAssignment}
+          instructors={instructors}
+          onSave={updateAssignment}
+          onClose={() => setEditingAssignment(null)}
+        />
+      )}
+    </div>
+  )
+}
+
+// ─── Shared Modal Shell ───────────────────────────────────────────────────────
+
+function Modal({ title, onClose, children }) {
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm">
+        <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-gray-100">
+          <h3 className="font-black text-gray-900">{title}</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
+        </div>
+        <div className="px-6 py-5">{children}</div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Add Instructor Form ──────────────────────────────────────────────────────
+
+function AddInstructorForm({ onSubmit }) {
+  const [values, setValues] = useState({ name: '', capacity: '', default_shift: '' })
+  const [submitting, setSubmitting] = useState(false)
+
+  async function handleSubmit(e) {
+    e.preventDefault()
+    setSubmitting(true)
+    await onSubmit(values)
+    setSubmitting(false)
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <Field label="Name" placeholder="e.g. Dustin">
+        <input type="text" placeholder="e.g. Dustin" value={values.name} onChange={e => setValues(v => ({ ...v, name: e.target.value }))} required className={inputClass} />
+      </Field>
+      <Field label="Max Students" placeholder="">
+        <input type="number" placeholder="e.g. 4" value={values.capacity} onChange={e => setValues(v => ({ ...v, capacity: e.target.value }))} required className={inputClass} />
+      </Field>
+      <Field label="Default Shift" placeholder="">
+        <select value={values.default_shift} onChange={e => setValues(v => ({ ...v, default_shift: e.target.value }))} className={inputClass}>
+          <option value="">No default</option>
+          {SHIFTS.map(s => <option key={s} value={s}>{s}</option>)}
+        </select>
+      </Field>
+      <SubmitButton submitting={submitting} label="Add Instructor" />
+    </form>
+  )
+}
+
+// ─── Add Student Form ─────────────────────────────────────────────────────────
+
+function AddStudentForm({ onSubmit }) {
+  const [values, setValues] = useState({ first_name: '', last_name: '', phone: '', email: '', training_type: '' })
+  const [submitting, setSubmitting] = useState(false)
+
+  async function handleSubmit(e) {
+    e.preventDefault()
+    setSubmitting(true)
+    await onSubmit(values)
+    setSubmitting(false)
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="First Name" placeholder="">
+          <input type="text" placeholder="Bob" value={values.first_name} onChange={e => setValues(v => ({ ...v, first_name: e.target.value }))} required className={inputClass} />
+        </Field>
+        <Field label="Last Name" placeholder="">
+          <input type="text" placeholder="Johnson" value={values.last_name} onChange={e => setValues(v => ({ ...v, last_name: e.target.value }))} required className={inputClass} />
+        </Field>
+      </div>
+      <Field label="Phone" placeholder="">
+        <input type="text" placeholder="801-555-1234" value={values.phone} onChange={e => setValues(v => ({ ...v, phone: e.target.value }))} className={inputClass} />
+      </Field>
+      <Field label="Email" placeholder="">
+        <input type="email" placeholder="bob@email.com" value={values.email} onChange={e => setValues(v => ({ ...v, email: e.target.value }))} className={inputClass} />
+      </Field>
+      <Field label="Training Type" placeholder="">
+        <select value={values.training_type} onChange={e => setValues(v => ({ ...v, training_type: e.target.value }))} className={inputClass}>
+          <option value="">Select type</option>
+          {TRAINING_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+        </select>
+      </Field>
+      <SubmitButton submitting={submitting} label="Add Student" />
+    </form>
+  )
+}
+
+// ─── Edit Instructor Modal ────────────────────────────────────────────────────
+
+function EditInstructorModal({ instructor, onSave, onClose }) {
+  const [values, setValues] = useState({ name: instructor.name, capacity: instructor.capacity, default_shift: instructor.default_shift || '' })
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState('')
+
+  async function handleSubmit(e) {
+    e.preventDefault()
+    setSubmitting(true)
+    setError('')
+    const result = await onSave(instructor.id, values)
+    if (result.error) { setError(result.error); setSubmitting(false) }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm">
+        <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-gray-100">
+          <h3 className="font-black text-gray-900">Edit Instructor</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
+        </div>
+        <div className="px-6 py-5">
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <Field label="Name" placeholder=""><input type="text" value={values.name} onChange={e => setValues(v => ({ ...v, name: e.target.value }))} required className={inputClass} /></Field>
+            <Field label="Max Students" placeholder=""><input type="number" value={values.capacity} onChange={e => setValues(v => ({ ...v, capacity: e.target.value }))} required className={inputClass} /></Field>
+            <Field label="Shift" placeholder="">
+              <select value={values.default_shift} onChange={e => setValues(v => ({ ...v, default_shift: e.target.value }))} className={inputClass}>
+                <option value="">No default</option>
+                {SHIFTS.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </Field>
+            {error && <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{error}</p>}
+            <SubmitButton submitting={submitting} label="Save Changes" />
+          </form>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Assign Modal ─────────────────────────────────────────────────────────────
+
+function AssignModal({ student, instructors, onAssign, onClose }) {
+  const [selectedInstructor, setSelectedInstructor] = useState('')
+  const [shift, setShift] = useState('')
+  const [startDate, setStartDate] = useState('')
+  const [endDate, setEndDate] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState('')
+
+  async function handleSubmit(e) {
+    e.preventDefault()
+    if (!selectedInstructor || !shift || !startDate || !endDate) return
+    setSubmitting(true)
+    setError('')
+    const result = await onAssign(student.id, selectedInstructor, shift, startDate, endDate)
+    if (result.error) { setError(result.error); setSubmitting(false) }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm">
+        <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-gray-100">
+          <div>
+            <h3 className="font-black text-gray-900">Assign Student</h3>
+            <p className="text-sm text-gray-500">{student.first_name} {student.last_name}</p>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
+        </div>
+        <div className="px-6 py-5">
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <Field label="Shift" placeholder="">
+              <select value={shift} onChange={e => setShift(e.target.value)} required className={inputClass}>
+                <option value="">Select shift</option>
+                {SHIFTS.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </Field>
+            <InstructorPicker instructors={instructors} selected={selectedInstructor} currentId={null} onChange={setSelectedInstructor} />
+            <DateRangePicker startDate={startDate} endDate={endDate} onStart={setStartDate} onEnd={setEndDate} />
+            {error && <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{error}</p>}
+            <SubmitButton submitting={submitting} label="Confirm Assignment" disabled={!selectedInstructor || !shift || !startDate || !endDate} />
+          </form>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Edit Assignment Modal ────────────────────────────────────────────────────
+
+function EditAssignmentModal({ assignment, instructors, onSave, onClose }) {
+  const [selectedInstructor, setSelectedInstructor] = useState(assignment.instructor_id)
+  const [shift, setShift] = useState(assignment.shift)
+  const [startDate, setStartDate] = useState(assignment.start_date)
+  const [endDate, setEndDate] = useState(assignment.end_date)
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState('')
+
+  async function handleSubmit(e) {
+    e.preventDefault()
+    setSubmitting(true)
+    setError('')
+    const result = await onSave(assignment.id, selectedInstructor, shift, startDate, endDate)
+    if (result.error) { setError(result.error); setSubmitting(false) }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm">
+        <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-gray-100">
+          <div>
+            <h3 className="font-black text-gray-900">Edit Assignment</h3>
+            <p className="text-sm text-gray-500">{assignment.student?.first_name} {assignment.student?.last_name}</p>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
+        </div>
+        <div className="px-6 py-5">
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <Field label="Shift" placeholder="">
+              <select value={shift} onChange={e => setShift(e.target.value)} required className={inputClass}>
+                {SHIFTS.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </Field>
+            <InstructorPicker instructors={instructors} selected={selectedInstructor} currentId={assignment.instructor_id} onChange={setSelectedInstructor} />
+            <DateRangePicker startDate={startDate} endDate={endDate} onStart={setStartDate} onEnd={setEndDate} />
+            {error && <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{error}</p>}
+            <SubmitButton submitting={submitting} label="Save Changes" />
+          </form>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Shared Sub-components ────────────────────────────────────────────────────
+
+const inputClass = "w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500 bg-white"
+
+function Field({ label, children }) {
+  return (
+    <div>
+      <label className="block text-xs font-bold text-gray-600 uppercase tracking-wide mb-1.5">{label}</label>
+      {children}
+    </div>
+  )
+}
+
+function SubmitButton({ submitting, label, disabled }) {
+  return (
+    <button
+      type="submit"
+      disabled={submitting || disabled}
+      className="w-full bg-red-600 text-white rounded-lg py-2.5 text-sm font-bold hover:bg-red-700 disabled:opacity-50 transition-colors mt-2"
+    >
+      {submitting ? 'Saving...' : label}
+    </button>
+  )
+}
+
+function InstructorPicker({ instructors, selected, currentId, onChange }) {
+  return (
+    <Field label="Instructor" placeholder="">
+      <div className="space-y-2">
+        {instructors.map(instructor => {
+          const isFull = instructor.current_count >= instructor.capacity && instructor.id !== currentId
+          return (
+            <label
+              key={instructor.id}
+              className={`flex items-center justify-between p-3 rounded-lg border cursor-pointer transition-colors ${
+                isFull
+                  ? 'border-gray-100 bg-gray-50 opacity-40 cursor-not-allowed'
+                  : selected === instructor.id
+                  ? 'border-red-500 bg-red-50'
+                  : 'border-gray-200 hover:border-red-300'
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <input type="radio" name="instructor" value={instructor.id} disabled={isFull} checked={selected === instructor.id} onChange={() => onChange(instructor.id)} className="accent-red-600" />
+                <div>
+                  <span className="text-sm font-semibold text-gray-900">{instructor.name}</span>
+                  {instructor.default_shift && <span className="ml-2 text-xs text-gray-400">{instructor.default_shift}</span>}
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-gray-400">{instructor.current_count}/{instructor.capacity}</span>
+                {isFull && <span className="text-xs font-bold bg-red-100 text-red-500 px-1.5 py-0.5 rounded-full">Full</span>}
+              </div>
+            </label>
+          )
+        })}
+      </div>
+    </Field>
+  )
+}
+
+function DateRangePicker({ startDate, endDate, onStart, onEnd }) {
+  return (
+    <div className="grid grid-cols-2 gap-3">
+      <Field label="Start Date" placeholder="">
+        <input type="date" value={startDate} onChange={e => onStart(e.target.value)} required className={inputClass} />
+      </Field>
+      <Field label="End Date" placeholder="">
+        <input type="date" value={endDate} onChange={e => onEnd(e.target.value)} required className={inputClass} />
+      </Field>
+    </div>
+  )
+}
