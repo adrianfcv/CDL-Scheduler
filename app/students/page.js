@@ -4,14 +4,23 @@ import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
 
-const SHIFTS = ['Morning', 'Afternoon', 'Evening', 'Saturday']
+const SHIFTS = ['Morning', 'Afternoon', 'Evening', 'Saturday', 'Sunrise']
+const TRAINING_TYPES = ['Class A', 'Class B', 'Refresher', 'Hazmat']
 
 export default function StudentsPage() {
   const [students, setStudents] = useState([])
   const [instructors, setInstructors] = useState([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState('All')
   const [editingStudent, setEditingStudent] = useState(null)
+  const [showAdd, setShowAdd] = useState(false)
+  const [toast, setToast] = useState(null)
+
+  function showToast(message, type = 'success') {
+    setToast({ message, type })
+    setTimeout(() => setToast(null), 3000)
+  }
 
   const today = new Date().toISOString().split('T')[0]
 
@@ -26,6 +35,19 @@ export default function StudentsPage() {
   }
 
   useEffect(() => { loadData() }, [])
+
+  async function addStudent(values) {
+    const res = await fetch('/api/students', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ first_name: values.first_name, last_name: values.last_name, phone: values.phone || null, email: values.email || null, training_type: values.training_type || null }),
+    })
+    if (!res.ok) { const { error } = await res.json(); return { error } }
+    setShowAdd(false)
+    loadData()
+    showToast('Student added successfully')
+    return {}
+  }
 
   function getStatus(student) {
     const a = student.assignments
@@ -53,12 +75,16 @@ export default function StudentsPage() {
     }
     setEditingStudent(null)
     loadData()
+    showToast(a ? 'Assignment updated' : 'Student assigned successfully')
     return {}
   }
 
-  const filtered = students.filter(s =>
-    `${s.first_name} ${s.last_name}`.toLowerCase().includes(search.toLowerCase())
-  )
+  const filtered = students.filter(s => {
+    const nameMatch = `${s.first_name} ${s.last_name}`.toLowerCase().includes(search.toLowerCase())
+    if (!nameMatch) return false
+    if (statusFilter === 'All') return true
+    return getStatus(s) === statusFilter
+  })
 
   const sorted = [...filtered].sort((a, b) => {
     const aDate = a.assignments?.start_date || ''
@@ -98,6 +124,12 @@ export default function StudentsPage() {
             <Link href="/instructors" className="text-sm font-medium text-gray-400 hover:text-white px-3 py-1.5 rounded-md transition-colors">Instructors</Link>
           </nav>
         </div>
+        <button
+          onClick={() => setShowAdd(true)}
+          className="px-4 py-2 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 font-medium transition-colors"
+        >
+          + Student
+        </button>
       </header>
 
       <main className="max-w-6xl mx-auto px-6 py-8">
@@ -119,7 +151,17 @@ export default function StudentsPage() {
         </div>
 
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-xs font-bold text-gray-500 uppercase tracking-widest">Student Roster</h2>
+          <div className="flex items-center gap-3">
+            <h2 className="text-xs font-bold text-gray-500 uppercase tracking-widest">Student Roster</h2>
+            <div className="flex gap-1">
+              {['All', 'Active', 'Completed', 'Unassigned'].map(f => (
+                <button key={f} onClick={() => setStatusFilter(f)}
+                  className={`text-xs font-bold px-3 py-1.5 rounded-full transition-colors ${statusFilter === f ? 'bg-gray-900 text-white' : 'bg-white text-gray-500 hover:bg-gray-100 border border-gray-200'}`}>
+                  {f}
+                </button>
+              ))}
+            </div>
+          </div>
           <input
             type="text"
             placeholder="Search by name..."
@@ -159,7 +201,14 @@ export default function StudentsPage() {
                           <div className="w-8 h-8 bg-red-600 text-white rounded-full flex items-center justify-center text-xs font-bold shrink-0">
                             {student.first_name[0]}{student.last_name[0]}
                           </div>
-                          <span className="font-semibold text-gray-900">{student.first_name} {student.last_name}</span>
+                          <div>
+                            <div className="font-semibold text-gray-900">{student.first_name} {student.last_name}</div>
+                            <div className="text-xs text-gray-400 mt-0.5">
+                              {student.phone && <span>{student.phone}</span>}
+                              {student.phone && student.email && <span className="mx-1">·</span>}
+                              {student.email && <span>{student.email}</span>}
+                            </div>
+                          </div>
                         </div>
                       </td>
                       <td className="px-5 py-3 text-gray-500">{student.training_type || '—'}</td>
@@ -185,6 +234,13 @@ export default function StudentsPage() {
         </div>
       </main>
 
+      {showAdd && (
+        <AddStudentModal
+          onSave={addStudent}
+          onClose={() => setShowAdd(false)}
+        />
+      )}
+
       {editingStudent && (
         <ReassignModal
           student={editingStudent}
@@ -193,6 +249,70 @@ export default function StudentsPage() {
           onClose={() => setEditingStudent(null)}
         />
       )}
+
+      {toast && (
+        <div className={`fixed bottom-6 right-6 z-50 px-4 py-3 rounded-xl shadow-lg text-sm font-semibold text-white transition-all ${toast.type === 'error' ? 'bg-red-600' : 'bg-gray-900'}`}>
+          {toast.message}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function AddStudentModal({ onSave, onClose }) {
+  const [values, setValues] = useState({ first_name: '', last_name: '', phone: '', email: '', training_type: '' })
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState('')
+
+  async function handleSubmit(e) {
+    e.preventDefault()
+    setSubmitting(true)
+    setError('')
+    const result = await onSave(values)
+    if (result?.error) { setError(result.error); setSubmitting(false) }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm">
+        <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-gray-100">
+          <h3 className="font-black text-gray-900">Add Student</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
+        </div>
+        <div className="px-6 py-5">
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-bold text-gray-600 uppercase tracking-wide mb-1.5">First Name</label>
+                <input type="text" value={values.first_name} onChange={e => setValues(v => ({ ...v, first_name: e.target.value }))} required placeholder="e.g. John" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500" />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-gray-600 uppercase tracking-wide mb-1.5">Last Name</label>
+                <input type="text" value={values.last_name} onChange={e => setValues(v => ({ ...v, last_name: e.target.value }))} required placeholder="e.g. Smith" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500" />
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-gray-600 uppercase tracking-wide mb-1.5">Training Type</label>
+              <select value={values.training_type} onChange={e => setValues(v => ({ ...v, training_type: e.target.value }))} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500">
+                <option value="">Select type</option>
+                {TRAINING_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-gray-600 uppercase tracking-wide mb-1.5">Phone</label>
+              <input type="tel" value={values.phone} onChange={e => setValues(v => ({ ...v, phone: e.target.value }))} required placeholder="e.g. 801-555-1234" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500" />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-gray-600 uppercase tracking-wide mb-1.5">Email</label>
+              <input type="email" value={values.email} onChange={e => setValues(v => ({ ...v, email: e.target.value }))} required placeholder="e.g. john@email.com" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500" />
+            </div>
+            {error && <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{error}</p>}
+            <button type="submit" disabled={submitting} className="w-full bg-red-600 text-white rounded-lg py-2.5 text-sm font-bold hover:bg-red-700 disabled:opacity-50 transition-colors mt-2">
+              {submitting ? 'Saving...' : 'Add Student'}
+            </button>
+          </form>
+        </div>
+      </div>
     </div>
   )
 }
@@ -239,7 +359,13 @@ function ReassignModal({ student, instructors, onSave, onClose }) {
               <label className="block text-xs font-bold text-gray-600 uppercase tracking-wide mb-1.5">Instructor</label>
               <div className="space-y-2">
                 {instructors.map(instructor => {
-                  const isFull = instructor.current_count >= instructor.capacity && instructor.id !== a?.instructor_id
+                  const effectiveCount = values.start_date
+                    ? instructor.assignments.filter(a2 =>
+                        a2.end_date >= values.start_date &&
+                        a2.id !== a?.id
+                      ).length
+                    : instructor.assignments.filter(a2 => a2.id !== a?.id).length
+                  const isFull = effectiveCount >= instructor.capacity
                   return (
                     <label key={instructor.id} className={`flex items-center justify-between p-3 rounded-lg border cursor-pointer transition-colors ${isFull ? 'border-gray-100 bg-gray-50 opacity-40 cursor-not-allowed' : values.instructor_id === instructor.id ? 'border-red-500 bg-red-50' : 'border-gray-200 hover:border-red-300'}`}>
                       <div className="flex items-center gap-3">
@@ -250,7 +376,7 @@ function ReassignModal({ student, instructors, onSave, onClose }) {
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
-                        <span className="text-xs text-gray-400">{instructor.current_count}/{instructor.capacity}</span>
+                        <span className="text-xs text-gray-400">{effectiveCount}/{instructor.capacity}</span>
                         {isFull && <span className="text-xs font-bold bg-red-100 text-red-500 px-1.5 py-0.5 rounded-full">Full</span>}
                       </div>
                     </label>

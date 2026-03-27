@@ -2,16 +2,18 @@ import { supabase } from '@/lib/supabase'
 import { NextResponse } from 'next/server'
 
 export async function GET() {
+  const today = new Date().toISOString().split('T')[0]
+
   const { data, error } = await supabase
     .from('instructors')
-    .select('*, assignments(count)')
+    .select('*, assignments(id, start_date, end_date)')
     .order('name')
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
   const instructors = data.map((i) => ({
     ...i,
-    current_count: i.assignments[0].count,
+    current_count: i.assignments.filter(a => a.end_date >= today).length,
   }))
 
   return NextResponse.json(instructors)

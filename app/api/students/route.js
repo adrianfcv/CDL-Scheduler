@@ -15,8 +15,8 @@ export async function GET() {
 export async function POST(request) {
   const { first_name, last_name, phone, email, training_type } = await request.json()
 
-  if (!first_name || !last_name) {
-    return NextResponse.json({ error: 'First name and last name are required' }, { status: 400 })
+  if (!first_name || !last_name || !phone || !email) {
+    return NextResponse.json({ error: 'First name, last name, phone, and email are required' }, { status: 400 })
   }
 
   const { data, error } = await supabase

@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
 
-const SHIFTS = ['Morning', 'Afternoon', 'Evening', 'Saturday']
+const SHIFTS = ['Morning', 'Afternoon', 'Evening', 'Saturday', 'Sunrise']
 
 export default function InstructorsPage() {
   const [instructors, setInstructors] = useState([])
@@ -28,7 +28,7 @@ export default function InstructorsPage() {
     await fetch('/api/instructors', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: values.name, capacity: parseInt(values.capacity), default_shift: values.default_shift || null }),
+      body: JSON.stringify({ name: values.name, capacity: parseInt(values.capacity), default_shift: values.default_shifts.length ? values.default_shifts.join(',') : null }),
     })
     setShowAdd(false)
     loadData()
@@ -38,7 +38,7 @@ export default function InstructorsPage() {
     const res = await fetch(`/api/instructors/${instructorId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: values.name, capacity: parseInt(values.capacity), default_shift: values.default_shift || null }),
+      body: JSON.stringify({ name: values.name, capacity: parseInt(values.capacity), default_shift: values.default_shifts.length ? values.default_shifts.join(',') : null }),
     })
     if (!res.ok) {
       const { error } = await res.json()
@@ -150,7 +150,11 @@ export default function InstructorsPage() {
                       </td>
                       <td className="px-5 py-4">
                         {instructor.default_shift
-                          ? <span className="text-xs font-semibold bg-red-600 text-white px-2 py-0.5 rounded-full">{instructor.default_shift}</span>
+                          ? <div className="flex flex-wrap gap-1">
+                              {instructor.default_shift.split(',').map(s => (
+                                <span key={s} className="text-xs font-semibold bg-red-600 text-white px-2 py-0.5 rounded-full">{s}</span>
+                              ))}
+                            </div>
                           : <span className="text-gray-400">—</span>
                         }
                       </td>
@@ -201,7 +205,7 @@ export default function InstructorsPage() {
       {showAdd && (
         <InstructorFormModal
           title="Add Instructor"
-          initial={{ name: '', capacity: '', default_shift: '' }}
+          initial={{ name: '', capacity: '', default_shifts: [] }}
           onSave={(_, values) => addInstructor(values)}
           onClose={() => setShowAdd(false)}
         />
@@ -211,7 +215,7 @@ export default function InstructorsPage() {
       {editing && (
         <InstructorFormModal
           title="Edit Instructor"
-          initial={{ name: editing.name, capacity: editing.capacity, default_shift: editing.default_shift || '' }}
+          initial={{ name: editing.name, capacity: editing.capacity, default_shifts: editing.default_shift ? editing.default_shift.split(',') : [] }}
           onSave={(values) => saveInstructor(editing.id, values)}
           onClose={() => setEditing(null)}
         />
@@ -267,6 +271,15 @@ function InstructorFormModal({ title, initial, onSave, onClose }) {
     }
   }
 
+  function toggleShift(shift) {
+    setValues(v => ({
+      ...v,
+      default_shifts: v.default_shifts.includes(shift)
+        ? v.default_shifts.filter(s => s !== shift)
+        : [...v.default_shifts, shift],
+    }))
+  }
+
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm">
@@ -285,11 +298,22 @@ function InstructorFormModal({ title, initial, onSave, onClose }) {
               <input type="number" value={values.capacity} onChange={e => setValues(v => ({ ...v, capacity: e.target.value }))} required placeholder="e.g. 4" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500" />
             </div>
             <div>
-              <label className="block text-xs font-bold text-gray-600 uppercase tracking-wide mb-1.5">Default Shift</label>
-              <select value={values.default_shift} onChange={e => setValues(v => ({ ...v, default_shift: e.target.value }))} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500">
-                <option value="">No default</option>
-                {SHIFTS.map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
+              <label className="block text-xs font-bold text-gray-600 uppercase tracking-wide mb-1.5">Shifts</label>
+              <div className="flex flex-wrap gap-2">
+                {SHIFTS.map(s => {
+                  const selected = values.default_shifts.includes(s)
+                  return (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() => toggleShift(s)}
+                      className={`text-xs font-bold px-3 py-1.5 rounded-full border transition-colors ${selected ? 'bg-red-600 text-white border-red-600' : 'bg-white text-gray-600 border-gray-200 hover:border-red-400'}`}
+                    >
+                      {s}
+                    </button>
+                  )
+                })}
+              </div>
             </div>
             {error && <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{error}</p>}
             <button type="submit" disabled={submitting} className="w-full bg-red-600 text-white rounded-lg py-2.5 text-sm font-bold hover:bg-red-700 disabled:opacity-50 transition-colors mt-2">

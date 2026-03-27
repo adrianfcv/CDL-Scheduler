@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
 
-const SHIFTS = ['Morning', 'Afternoon', 'Evening', 'Saturday']
+const SHIFTS = ['Morning', 'Afternoon', 'Evening', 'Saturday', 'Sunrise']
 const TRAINING_TYPES = ['Class A', 'Refresher', 'Gooseneck', 'Other']
 
 export default function Dashboard() {
@@ -16,20 +16,42 @@ export default function Dashboard() {
   const [assigningStudent, setAssigningStudent] = useState(null)
   const [editingAssignment, setEditingAssignment] = useState(null)
   const [editingInstructor, setEditingInstructor] = useState(null)
+  const [toast, setToast] = useState(null)
+
+  function showToast(message, type = 'success') {
+    setToast({ message, type })
+    setTimeout(() => setToast(null), 3000)
+  }
 
   const loadData = useCallback(async () => {
     const [instrRes, studRes] = await Promise.all([
       fetch('/api/instructors'),
       fetch('/api/students'),
     ])
-    setInstructors(await instrRes.json())
-    setStudents(await studRes.json())
+    const instrData = await instrRes.json()
+    const studData = await studRes.json()
+    setInstructors(Array.isArray(instrData) ? instrData : [])
+    setStudents(Array.isArray(studData) ? studData : [])
     setLoading(false)
   }, [])
 
   useEffect(() => { loadData() }, [loadData])
 
   const today = new Date().toISOString().split('T')[0]
+  const [viewDate, setViewDate] = useState(today)
+
+  function shiftDate(n) {
+    const d = new Date(viewDate + 'T00:00:00')
+    d.setDate(d.getDate() + n)
+    setViewDate(d.toISOString().split('T')[0])
+  }
+
+  function formatViewDate(dateStr) {
+    const d = new Date(dateStr + 'T00:00:00')
+    return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+  }
+
+  const isToday = viewDate === today
 
   const toAssignmentArray = (s) => s.assignments ? [s.assignments] : []
   const unassigned = students.filter(s => !s.assignments)
@@ -37,7 +59,7 @@ export default function Dashboard() {
   const byShift = SHIFTS.reduce((acc, shift) => {
     acc[shift] = students
       .flatMap(s => toAssignmentArray(s).map(a => ({ ...a, student: s })))
-      .filter(a => a.shift === shift && a.start_date <= today && a.end_date >= today)
+      .filter(a => a.shift === shift && a.start_date <= viewDate && a.end_date >= viewDate)
     return acc
   }, {})
 
@@ -45,12 +67,19 @@ export default function Dashboard() {
   students.forEach(s => {
     const a = s.assignments
     if (!a || !a.start_date || !a.end_date) return
-    if (a.start_date <= today && a.end_date >= today) {
+    if (a.start_date <= viewDate && a.end_date >= viewDate) {
       if (!instructorActiveShifts[a.instructor_id]) {
         instructorActiveShifts[a.instructor_id] = new Set()
       }
       instructorActiveShifts[a.instructor_id].add(a.shift)
     }
+  })
+
+  const instructorViewCounts = {}
+  instructors.forEach(instructor => {
+    instructorViewCounts[instructor.id] = instructor.assignments.filter(
+      a => a.start_date <= viewDate && a.end_date >= viewDate
+    ).length
   })
 
   async function updateInstructor(instructorId, values) {
@@ -60,7 +89,7 @@ export default function Dashboard() {
       body: JSON.stringify({
         name: values.name,
         capacity: parseInt(values.capacity),
-        default_shift: values.default_shift || null,
+        default_shift: values.default_shifts?.length ? values.default_shifts.join(',') : null,
       }),
     })
     if (!res.ok) {
@@ -69,6 +98,7 @@ export default function Dashboard() {
     }
     setEditingInstructor(null)
     loadData()
+    showToast('Instructor updated')
     return {}
   }
 
@@ -84,6 +114,7 @@ export default function Dashboard() {
     }
     setEditingAssignment(null)
     loadData()
+    showToast('Assignment updated')
     return {}
   }
 
@@ -99,6 +130,7 @@ export default function Dashboard() {
     }
     setAssigningStudent(null)
     loadData()
+    showToast('Student assigned successfully')
     return {}
   }
 
@@ -106,20 +138,24 @@ export default function Dashboard() {
     await fetch('/api/instructors', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: values.name, capacity: parseInt(values.capacity), default_shift: values.default_shift || null }),
+      body: JSON.stringify({ name: values.name, capacity: parseInt(values.capacity), default_shift: values.default_shifts?.length ? values.default_shifts.join(',') : null }),
     })
     setShowAddInstructor(false)
     loadData()
+    showToast('Instructor added')
   }
 
   async function addStudent(values) {
-    await fetch('/api/students', {
+    const res = await fetch('/api/students', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ first_name: values.first_name, last_name: values.last_name, phone: values.phone, email: values.email, training_type: values.training_type }),
     })
+    if (!res.ok) { const { error } = await res.json(); return { error } }
     setShowAddStudent(false)
     loadData()
+    showToast('Student added successfully')
+    return {}
   }
 
   if (loading) {
@@ -168,6 +204,33 @@ export default function Dashboard() {
         </div>
       </header>
 
+      {/* Date Navigator */}
+      <div className="bg-white border-b border-gray-200 px-6 py-3">
+        <div className="max-w-7xl mx-auto flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <button onClick={() => shiftDate(-7)} className="px-3 py-1.5 text-sm font-bold text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors">← Prev Week</button>
+            <button onClick={() => shiftDate(-1)} className="px-3 py-1.5 text-sm text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">‹ Day</button>
+          </div>
+          <div className="flex items-center gap-3">
+            <input
+              type="date"
+              value={viewDate}
+              onChange={e => e.target.value && setViewDate(e.target.value)}
+              className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+            />
+            <span className="text-sm font-semibold text-gray-900">{formatViewDate(viewDate)}</span>
+            {!isToday && (
+              <button onClick={() => setViewDate(today)} className="px-3 py-1.5 text-xs font-bold text-red-600 hover:bg-red-50 rounded-lg border border-red-200 transition-colors">Today</button>
+            )}
+            {isToday && <span className="text-xs font-bold text-green-600 bg-green-50 px-2 py-1 rounded-lg">Today</span>}
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={() => shiftDate(1)} className="px-3 py-1.5 text-sm text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">Day ›</button>
+            <button onClick={() => shiftDate(7)} className="px-3 py-1.5 text-sm font-bold text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors">Next Week →</button>
+          </div>
+        </div>
+      </div>
+
       <main className="max-w-7xl mx-auto px-6 py-8 space-y-8">
 
         {/* Instructor capacity */}
@@ -176,8 +239,9 @@ export default function Dashboard() {
             <h2 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-4">Instructor Capacity</h2>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
               {instructors.map(instructor => {
-                const isFull = instructor.current_count >= instructor.capacity
-                const pct = Math.min((instructor.current_count / instructor.capacity) * 100, 100)
+                const viewCount = instructorViewCounts[instructor.id] ?? instructor.current_count
+                const isFull = viewCount >= instructor.capacity
+                const pct = Math.min((viewCount / instructor.capacity) * 100, 100)
                 const activeShifts = instructorActiveShifts[instructor.id]
                   ? [...instructorActiveShifts[instructor.id]]
                   : []
@@ -202,14 +266,16 @@ export default function Dashboard() {
                             </span>
                           ))
                         : instructor.default_shift
-                        ? <span className="text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">{instructor.default_shift}</span>
+                        ? instructor.default_shift.split(',').map(s => (
+                            <span key={s} className="text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">{s}</span>
+                          ))
                         : <span className="text-xs text-gray-300">No active students</span>
                       }
                     </div>
 
                     <div className="flex items-end justify-between mb-2">
                       <div>
-                        <span className="text-3xl font-black text-gray-900">{instructor.current_count}</span>
+                        <span className="text-3xl font-black text-gray-900">{viewCount}</span>
                         <span className="text-sm text-gray-400 ml-1">/ {instructor.capacity}</span>
                       </div>
                       {isFull && (
@@ -232,7 +298,9 @@ export default function Dashboard() {
 
         {/* Weekly schedule */}
         <section>
-          <h2 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-4">This Week's Schedule</h2>
+          <h2 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-4">
+            {isToday ? "Today's Schedule" : `Schedule — ${formatViewDate(viewDate)}`}
+          </h2>
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             {SHIFTS.map((shift, idx) => {
               const assignments = byShift[shift]
@@ -366,6 +434,12 @@ export default function Dashboard() {
           onClose={() => setEditingAssignment(null)}
         />
       )}
+
+      {toast && (
+        <div className={`fixed bottom-6 right-6 z-50 px-4 py-3 rounded-xl shadow-lg text-sm font-semibold text-white transition-all ${toast.type === 'error' ? 'bg-red-600' : 'bg-gray-900'}`}>
+          {toast.message}
+        </div>
+      )}
     </div>
   )
 }
@@ -389,7 +463,7 @@ function Modal({ title, onClose, children }) {
 // ─── Add Instructor Form ──────────────────────────────────────────────────────
 
 function AddInstructorForm({ onSubmit }) {
-  const [values, setValues] = useState({ name: '', capacity: '', default_shift: '' })
+  const [values, setValues] = useState({ name: '', capacity: '', default_shifts: [] })
   const [submitting, setSubmitting] = useState(false)
 
   async function handleSubmit(e) {
@@ -399,19 +473,35 @@ function AddInstructorForm({ onSubmit }) {
     setSubmitting(false)
   }
 
+  function toggleShift(shift) {
+    setValues(v => ({
+      ...v,
+      default_shifts: v.default_shifts.includes(shift)
+        ? v.default_shifts.filter(s => s !== shift)
+        : [...v.default_shifts, shift],
+    }))
+  }
+
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
-      <Field label="Name" placeholder="e.g. Dustin">
+      <Field label="Name">
         <input type="text" placeholder="e.g. Dustin" value={values.name} onChange={e => setValues(v => ({ ...v, name: e.target.value }))} required className={inputClass} />
       </Field>
-      <Field label="Max Students" placeholder="">
+      <Field label="Max Students">
         <input type="number" placeholder="e.g. 4" value={values.capacity} onChange={e => setValues(v => ({ ...v, capacity: e.target.value }))} required className={inputClass} />
       </Field>
-      <Field label="Default Shift" placeholder="">
-        <select value={values.default_shift} onChange={e => setValues(v => ({ ...v, default_shift: e.target.value }))} className={inputClass}>
-          <option value="">No default</option>
-          {SHIFTS.map(s => <option key={s} value={s}>{s}</option>)}
-        </select>
+      <Field label="Shifts">
+        <div className="flex flex-wrap gap-2">
+          {SHIFTS.map(s => {
+            const selected = values.default_shifts.includes(s)
+            return (
+              <button key={s} type="button" onClick={() => toggleShift(s)}
+                className={`text-xs font-bold px-3 py-1.5 rounded-full border transition-colors ${selected ? 'bg-red-600 text-white border-red-600' : 'bg-white text-gray-600 border-gray-200 hover:border-red-400'}`}>
+                {s}
+              </button>
+            )
+          })}
+        </div>
       </Field>
       <SubmitButton submitting={submitting} label="Add Instructor" />
     </form>
@@ -442,10 +532,10 @@ function AddStudentForm({ onSubmit }) {
         </Field>
       </div>
       <Field label="Phone" placeholder="">
-        <input type="text" placeholder="801-555-1234" value={values.phone} onChange={e => setValues(v => ({ ...v, phone: e.target.value }))} className={inputClass} />
+        <input type="text" placeholder="801-555-1234" value={values.phone} onChange={e => setValues(v => ({ ...v, phone: e.target.value }))} required className={inputClass} />
       </Field>
       <Field label="Email" placeholder="">
-        <input type="email" placeholder="bob@email.com" value={values.email} onChange={e => setValues(v => ({ ...v, email: e.target.value }))} className={inputClass} />
+        <input type="email" placeholder="bob@email.com" value={values.email} onChange={e => setValues(v => ({ ...v, email: e.target.value }))} required className={inputClass} />
       </Field>
       <Field label="Training Type" placeholder="">
         <select value={values.training_type} onChange={e => setValues(v => ({ ...v, training_type: e.target.value }))} className={inputClass}>
@@ -461,7 +551,11 @@ function AddStudentForm({ onSubmit }) {
 // ─── Edit Instructor Modal ────────────────────────────────────────────────────
 
 function EditInstructorModal({ instructor, onSave, onClose }) {
-  const [values, setValues] = useState({ name: instructor.name, capacity: instructor.capacity, default_shift: instructor.default_shift || '' })
+  const [values, setValues] = useState({
+    name: instructor.name,
+    capacity: instructor.capacity,
+    default_shifts: instructor.default_shift ? instructor.default_shift.split(',') : [],
+  })
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
 
@@ -473,6 +567,15 @@ function EditInstructorModal({ instructor, onSave, onClose }) {
     if (result.error) { setError(result.error); setSubmitting(false) }
   }
 
+  function toggleShift(shift) {
+    setValues(v => ({
+      ...v,
+      default_shifts: v.default_shifts.includes(shift)
+        ? v.default_shifts.filter(s => s !== shift)
+        : [...v.default_shifts, shift],
+    }))
+  }
+
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm">
@@ -482,13 +585,20 @@ function EditInstructorModal({ instructor, onSave, onClose }) {
         </div>
         <div className="px-6 py-5">
           <form onSubmit={handleSubmit} className="space-y-4">
-            <Field label="Name" placeholder=""><input type="text" value={values.name} onChange={e => setValues(v => ({ ...v, name: e.target.value }))} required className={inputClass} /></Field>
-            <Field label="Max Students" placeholder=""><input type="number" value={values.capacity} onChange={e => setValues(v => ({ ...v, capacity: e.target.value }))} required className={inputClass} /></Field>
-            <Field label="Shift" placeholder="">
-              <select value={values.default_shift} onChange={e => setValues(v => ({ ...v, default_shift: e.target.value }))} className={inputClass}>
-                <option value="">No default</option>
-                {SHIFTS.map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
+            <Field label="Name"><input type="text" value={values.name} onChange={e => setValues(v => ({ ...v, name: e.target.value }))} required className={inputClass} /></Field>
+            <Field label="Max Students"><input type="number" value={values.capacity} onChange={e => setValues(v => ({ ...v, capacity: e.target.value }))} required className={inputClass} /></Field>
+            <Field label="Shifts">
+              <div className="flex flex-wrap gap-2">
+                {SHIFTS.map(s => {
+                  const selected = values.default_shifts.includes(s)
+                  return (
+                    <button key={s} type="button" onClick={() => toggleShift(s)}
+                      className={`text-xs font-bold px-3 py-1.5 rounded-full border transition-colors ${selected ? 'bg-red-600 text-white border-red-600' : 'bg-white text-gray-600 border-gray-200 hover:border-red-400'}`}>
+                      {s}
+                    </button>
+                  )
+                })}
+              </div>
             </Field>
             {error && <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{error}</p>}
             <SubmitButton submitting={submitting} label="Save Changes" />
