@@ -14,6 +14,7 @@ export default function StudentsPage() {
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('All')
   const [editingStudent, setEditingStudent] = useState(null)
+  const [editingInfo, setEditingInfo] = useState(null)
   const [showAdd, setShowAdd] = useState(false)
   const [toast, setToast] = useState(null)
 
@@ -54,6 +55,31 @@ export default function StudentsPage() {
     if (!a) return 'Unassigned'
     if (a.end_date >= today) return 'Active'
     return 'Completed'
+  }
+
+  async function saveStudentInfo(student, values) {
+    const res = await fetch(`/api/students/${student.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ first_name: values.first_name, last_name: values.last_name, phone: values.phone || null, email: values.email || null, training_type: values.training_type || null }),
+    })
+    if (!res.ok) { const { error } = await res.json(); return { error } }
+
+    // If they have an assignment and shift changed, update it too
+    const a = student.assignments
+    if (a && values.shift && values.shift !== a.shift) {
+      const aRes = await fetch(`/api/assignments/${a.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ instructor_id: a.instructor_id, shift: values.shift, start_date: a.start_date, end_date: a.end_date }),
+      })
+      if (!aRes.ok) { const { error } = await aRes.json(); return { error } }
+    }
+
+    setEditingInfo(null)
+    loadData()
+    showToast('Student updated successfully')
+    return {}
   }
 
   async function saveAssignment(student, values) {
@@ -218,12 +244,20 @@ export default function StudentsPage() {
                       <td className="px-5 py-3 text-gray-500">{a?.end_date || '—'}</td>
                       <td className="px-5 py-3"><StatusBadge status={status} /></td>
                       <td className="px-5 py-3 text-right">
-                        <button
-                          onClick={() => setEditingStudent(student)}
-                          className="text-xs font-bold text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100 px-3 py-1.5 rounded-lg transition-colors"
-                        >
-                          {a ? 'Reassign' : 'Assign'}
-                        </button>
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            onClick={() => setEditingInfo(student)}
+                            className="text-xs font-bold text-gray-500 hover:text-gray-700 bg-gray-100 hover:bg-gray-200 px-3 py-1.5 rounded-lg transition-colors"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            onClick={() => setEditingStudent(student)}
+                            className="text-xs font-bold text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100 px-3 py-1.5 rounded-lg transition-colors"
+                          >
+                            {a ? 'Reassign' : 'Assign'}
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   )
@@ -238,6 +272,14 @@ export default function StudentsPage() {
         <AddStudentModal
           onSave={addStudent}
           onClose={() => setShowAdd(false)}
+        />
+      )}
+
+      {editingInfo && (
+        <EditStudentModal
+          student={editingInfo}
+          onSave={saveStudentInfo}
+          onClose={() => setEditingInfo(null)}
         />
       )}
 
@@ -397,6 +439,84 @@ function ReassignModal({ student, instructors, onSave, onClose }) {
             {error && <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{error}</p>}
             <button type="submit" disabled={!values.instructor_id || !values.shift || !values.start_date || !values.end_date || submitting} className="w-full bg-red-600 text-white rounded-lg py-2.5 text-sm font-bold hover:bg-red-700 disabled:opacity-50 transition-colors mt-2">
               {submitting ? 'Saving...' : a ? 'Save Reassignment' : 'Confirm Assignment'}
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function EditStudentModal({ student, onSave, onClose }) {
+  const a = student.assignments
+  const [values, setValues] = useState({
+    first_name: student.first_name,
+    last_name: student.last_name,
+    phone: student.phone || '',
+    email: student.email || '',
+    training_type: student.training_type || '',
+    shift: a?.shift || '',
+  })
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState('')
+
+  async function handleSubmit(e) {
+    e.preventDefault()
+    setSubmitting(true)
+    setError('')
+    const result = await onSave(student, values)
+    if (result?.error) { setError(result.error); setSubmitting(false) }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm">
+        <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-gray-100">
+          <div>
+            <h3 className="font-black text-gray-900">Edit Student</h3>
+            <p className="text-sm text-gray-500">{student.first_name} {student.last_name}</p>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
+        </div>
+        <div className="px-6 py-5">
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-bold text-gray-600 uppercase tracking-wide mb-1.5">First Name</label>
+                <input type="text" value={values.first_name} onChange={e => setValues(v => ({ ...v, first_name: e.target.value }))} required className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500" />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-gray-600 uppercase tracking-wide mb-1.5">Last Name</label>
+                <input type="text" value={values.last_name} onChange={e => setValues(v => ({ ...v, last_name: e.target.value }))} required className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500" />
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-gray-600 uppercase tracking-wide mb-1.5">Training Type</label>
+              <select value={values.training_type} onChange={e => setValues(v => ({ ...v, training_type: e.target.value }))} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500">
+                <option value="">Select type</option>
+                {TRAINING_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-gray-600 uppercase tracking-wide mb-1.5">Phone</label>
+              <input type="tel" value={values.phone} onChange={e => setValues(v => ({ ...v, phone: e.target.value }))} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500" />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-gray-600 uppercase tracking-wide mb-1.5">Email</label>
+              <input type="email" value={values.email} onChange={e => setValues(v => ({ ...v, email: e.target.value }))} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500" />
+            </div>
+            {a && (
+              <div>
+                <label className="block text-xs font-bold text-gray-600 uppercase tracking-wide mb-1.5">Shift</label>
+                <select value={values.shift} onChange={e => setValues(v => ({ ...v, shift: e.target.value }))} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500">
+                  <option value="">Select shift</option>
+                  {SHIFTS.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+            )}
+            {error && <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{error}</p>}
+            <button type="submit" disabled={submitting} className="w-full bg-red-600 text-white rounded-lg py-2.5 text-sm font-bold hover:bg-red-700 disabled:opacity-50 transition-colors mt-2">
+              {submitting ? 'Saving...' : 'Save Changes'}
             </button>
           </form>
         </div>
