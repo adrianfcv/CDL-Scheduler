@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import React, { useState, useEffect } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
 
@@ -17,6 +17,8 @@ export default function StudentsPage() {
   const [editingInfo, setEditingInfo] = useState(null)
   const [showAdd, setShowAdd] = useState(false)
   const [toast, setToast] = useState(null)
+  const [dbError, setDbError] = useState(false)
+  const [expandedStudent, setExpandedStudent] = useState(null)
 
   function showToast(message, type = 'success') {
     setToast({ message, type })
@@ -29,6 +31,12 @@ export default function StudentsPage() {
     Promise.all([fetch('/api/students'), fetch('/api/instructors')])
       .then(([sRes, iRes]) => Promise.all([sRes.json(), iRes.json()]))
       .then(([studentsData, instructorsData]) => {
+        if (!Array.isArray(studentsData) || !Array.isArray(instructorsData)) {
+          setDbError(true)
+          setLoading(false)
+          return
+        }
+        setDbError(false)
         setStudents(studentsData)
         setInstructors(instructorsData)
         setLoading(false)
@@ -133,6 +141,26 @@ export default function StudentsPage() {
     )
   }
 
+  if (dbError) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-black">
+        <div className="text-center max-w-sm px-6">
+          <div className="w-12 h-12 bg-red-600/20 rounded-full flex items-center justify-center mx-auto mb-4">
+            <span className="text-red-500 text-xl font-black">!</span>
+          </div>
+          <p className="text-white font-bold mb-1">Unable to load data</p>
+          <p className="text-gray-400 text-sm mb-5">The database could not be reached. Check that Supabase is active and your connection is working.</p>
+          <button
+            onClick={() => { setDbError(false); setLoading(true); loadData() }}
+            className="px-4 py-2 bg-red-600 text-white text-sm font-bold rounded-lg hover:bg-red-700 transition-colors"
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="min-h-screen bg-gray-100">
       <header className="bg-black px-6 py-4 flex items-center justify-between shadow-lg">
@@ -180,10 +208,15 @@ export default function StudentsPage() {
           <div className="flex items-center gap-3">
             <h2 className="text-xs font-bold text-gray-500 uppercase tracking-widest">Student Roster</h2>
             <div className="flex gap-1">
-              {['All', 'Active', 'Completed', 'Unassigned'].map(f => (
-                <button key={f} onClick={() => setStatusFilter(f)}
-                  className={`text-xs font-bold px-3 py-1.5 rounded-full transition-colors ${statusFilter === f ? 'bg-gray-900 text-white' : 'bg-white text-gray-500 hover:bg-gray-100 border border-gray-200'}`}>
-                  {f}
+              {[
+                { label: 'All', count: students.length },
+                { label: 'Active', count: activeCount },
+                { label: 'Completed', count: completedCount },
+                { label: 'Unassigned', count: unassignedCount },
+              ].map(({ label, count }) => (
+                <button key={label} onClick={() => setStatusFilter(label)}
+                  className={`text-xs font-bold px-3 py-1.5 rounded-full transition-colors ${statusFilter === label ? 'bg-gray-900 text-white' : 'bg-white text-gray-500 hover:bg-gray-100 border border-gray-200'}`}>
+                  {label} <span className={`ml-1 ${statusFilter === label ? 'text-gray-300' : 'text-gray-400'}`}>{count}</span>
                 </button>
               ))}
             </div>
@@ -220,46 +253,94 @@ export default function StudentsPage() {
                 sorted.map(student => {
                   const a = student.assignments
                   const status = getStatus(student)
+                  const isCompleted = status === 'Completed'
+                  const isExpanded = expandedStudent === student.id
                   return (
-                    <tr key={student.id} className="hover:bg-gray-50 transition-colors">
-                      <td className="px-5 py-3">
-                        <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 bg-red-600 text-white rounded-full flex items-center justify-center text-xs font-bold shrink-0">
-                            {student.first_name[0]}{student.last_name[0]}
-                          </div>
-                          <div>
-                            <div className="font-semibold text-gray-900">{student.first_name} {student.last_name}</div>
-                            <div className="text-xs text-gray-400 mt-0.5">
-                              {student.phone && <span>{student.phone}</span>}
-                              {student.phone && student.email && <span className="mx-1">·</span>}
-                              {student.email && <span>{student.email}</span>}
+                    <React.Fragment key={student.id}>
+                      <tr className={`transition-colors ${isExpanded ? 'bg-gray-50' : 'hover:bg-gray-50'}`}>
+                        <td className="px-5 py-3">
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 bg-red-600 text-white rounded-full flex items-center justify-center text-xs font-bold shrink-0">
+                              {student.first_name[0]}{student.last_name[0]}
+                            </div>
+                            <div>
+                              <div className="font-semibold text-gray-900">{student.first_name} {student.last_name}</div>
+                              <div className="text-xs text-gray-400 mt-0.5">
+                                {student.phone && <span>{student.phone}</span>}
+                                {student.phone && student.email && <span className="mx-1">·</span>}
+                                {student.email && <span>{student.email}</span>}
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      </td>
-                      <td className="px-5 py-3 text-gray-500">{student.training_type || '—'}</td>
-                      <td className="px-5 py-3 text-gray-500">{a?.instructors?.name || '—'}</td>
-                      <td className="px-5 py-3 text-gray-500">{a?.shift || '—'}</td>
-                      <td className="px-5 py-3 text-gray-500">{a?.start_date || '—'}</td>
-                      <td className="px-5 py-3 text-gray-500">{a?.end_date || '—'}</td>
-                      <td className="px-5 py-3"><StatusBadge status={status} /></td>
-                      <td className="px-5 py-3 text-right">
-                        <div className="flex items-center justify-end gap-2">
-                          <button
-                            onClick={() => setEditingInfo(student)}
-                            className="text-xs font-bold text-gray-500 hover:text-gray-700 bg-gray-100 hover:bg-gray-200 px-3 py-1.5 rounded-lg transition-colors"
-                          >
-                            Edit
-                          </button>
-                          <button
-                            onClick={() => setEditingStudent(student)}
-                            className="text-xs font-bold text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100 px-3 py-1.5 rounded-lg transition-colors"
-                          >
-                            {a ? 'Reassign' : 'Assign'}
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
+                        </td>
+                        <td className="px-5 py-3 text-gray-500">{student.training_type || '—'}</td>
+                        <td className="px-5 py-3 text-gray-500">{a?.instructors?.name || '—'}</td>
+                        <td className="px-5 py-3 text-gray-500">{a?.shift || '—'}</td>
+                        <td className="px-5 py-3 text-gray-500">{a?.start_date || '—'}</td>
+                        <td className="px-5 py-3 text-gray-500">{a?.end_date || '—'}</td>
+                        <td className="px-5 py-3"><StatusBadge status={status} /></td>
+                        <td className="px-5 py-3 text-right">
+                          <div className="flex items-center justify-end gap-2">
+                            {isCompleted && (
+                              <button
+                                onClick={() => setExpandedStudent(isExpanded ? null : student.id)}
+                                className="text-xs font-bold text-gray-400 hover:text-gray-700 bg-gray-100 hover:bg-gray-200 px-2 py-1.5 rounded-lg transition-colors"
+                                title="View assignment history"
+                              >
+                                {isExpanded ? '▲' : '▼'}
+                              </button>
+                            )}
+                            <button
+                              onClick={() => setEditingInfo(student)}
+                              className="text-xs font-bold text-gray-500 hover:text-gray-700 bg-gray-100 hover:bg-gray-200 px-3 py-1.5 rounded-lg transition-colors"
+                            >
+                              Edit
+                            </button>
+                            <button
+                              onClick={() => setEditingStudent(student)}
+                              className="text-xs font-bold text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100 px-3 py-1.5 rounded-lg transition-colors"
+                            >
+                              {a ? 'Reassign' : 'Assign'}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                      {isExpanded && isCompleted && a && (
+                        <tr key={`${student.id}-history`} className="bg-gray-50 border-t border-gray-100">
+                          <td colSpan={8} className="px-5 py-4">
+                            <div className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2">Assignment History</div>
+                            <div className="inline-flex items-center gap-6 bg-white border border-gray-200 rounded-xl px-5 py-3 text-sm">
+                              <div>
+                                <div className="text-xs text-gray-400 mb-0.5">Instructor</div>
+                                <div className="font-semibold text-gray-900">{a.instructors?.name || '—'}</div>
+                              </div>
+                              <div className="w-px h-8 bg-gray-200" />
+                              <div>
+                                <div className="text-xs text-gray-400 mb-0.5">Shift</div>
+                                <div className="font-semibold text-gray-900">{a.shift}</div>
+                              </div>
+                              <div className="w-px h-8 bg-gray-200" />
+                              <div>
+                                <div className="text-xs text-gray-400 mb-0.5">Start Date</div>
+                                <div className="font-semibold text-gray-900">{a.start_date}</div>
+                              </div>
+                              <div className="w-px h-8 bg-gray-200" />
+                              <div>
+                                <div className="text-xs text-gray-400 mb-0.5">End Date</div>
+                                <div className="font-semibold text-gray-900">{a.end_date}</div>
+                              </div>
+                              <div className="w-px h-8 bg-gray-200" />
+                              <div>
+                                <div className="text-xs text-gray-400 mb-0.5">Duration</div>
+                                <div className="font-semibold text-gray-900">
+                                  {Math.round((new Date(a.end_date) - new Date(a.start_date)) / (1000 * 60 * 60 * 24))} days
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
                   )
                 })
               )}

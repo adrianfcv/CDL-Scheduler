@@ -12,11 +12,19 @@ export default function InstructorsPage() {
   const [showAdd, setShowAdd] = useState(false)
   const [editing, setEditing] = useState(null)
   const [confirmDelete, setConfirmDelete] = useState(null)
+  const [dbError, setDbError] = useState(false)
+  const [search, setSearch] = useState('')
 
   function loadData() {
     fetch('/api/instructors')
       .then(r => r.json())
       .then(data => {
+        if (!Array.isArray(data)) {
+          setDbError(true)
+          setLoading(false)
+          return
+        }
+        setDbError(false)
         setInstructors(data)
         setLoading(false)
       })
@@ -61,6 +69,26 @@ export default function InstructorsPage() {
         <div className="text-center">
           <div className="w-12 h-12 border-4 border-red-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
           <p className="text-gray-400 text-sm">Loading...</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (dbError) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-black">
+        <div className="text-center max-w-sm px-6">
+          <div className="w-12 h-12 bg-red-600/20 rounded-full flex items-center justify-center mx-auto mb-4">
+            <span className="text-red-500 text-xl font-black">!</span>
+          </div>
+          <p className="text-white font-bold mb-1">Unable to load data</p>
+          <p className="text-gray-400 text-sm mb-5">The database could not be reached. Check that Supabase is active and your connection is working.</p>
+          <button
+            onClick={() => { setDbError(false); setLoading(true); loadData() }}
+            className="px-4 py-2 bg-red-600 text-white text-sm font-bold rounded-lg hover:bg-red-700 transition-colors"
+          >
+            Retry
+          </button>
         </div>
       </div>
     )
@@ -113,8 +141,15 @@ export default function InstructorsPage() {
           </div>
         </div>
 
-        <div className="mb-4">
+        <div className="flex items-center justify-between mb-4">
           <h2 className="text-xs font-bold text-gray-500 uppercase tracking-widest">Instructor Roster</h2>
+          <input
+            type="text"
+            placeholder="Search by name..."
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500 w-56 bg-white"
+          />
         </div>
 
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
@@ -135,7 +170,9 @@ export default function InstructorsPage() {
                   <td colSpan={6} className="px-5 py-12 text-center text-gray-400">No instructors yet</td>
                 </tr>
               ) : (
-                instructors.map(instructor => {
+                instructors
+                  .filter(i => i.name.toLowerCase().includes(search.toLowerCase()))
+                  .map(instructor => {
                   const isFull = instructor.current_count >= instructor.capacity
                   const pct = Math.min((instructor.current_count / instructor.capacity) * 100, 100)
                   return (

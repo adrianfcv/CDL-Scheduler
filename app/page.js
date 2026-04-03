@@ -17,11 +17,14 @@ export default function Dashboard() {
   const [editingAssignment, setEditingAssignment] = useState(null)
   const [editingInstructor, setEditingInstructor] = useState(null)
   const [toast, setToast] = useState(null)
+  const [unassignedSearch, setUnassignedSearch] = useState('')
 
   function showToast(message, type = 'success') {
     setToast({ message, type })
     setTimeout(() => setToast(null), 3000)
   }
+
+  const [dbError, setDbError] = useState(false)
 
   const loadData = useCallback(async () => {
     const [instrRes, studRes] = await Promise.all([
@@ -30,8 +33,14 @@ export default function Dashboard() {
     ])
     const instrData = await instrRes.json()
     const studData = await studRes.json()
-    setInstructors(Array.isArray(instrData) ? instrData : [])
-    setStudents(Array.isArray(studData) ? studData : [])
+    if (!Array.isArray(instrData) || !Array.isArray(studData)) {
+      setDbError(true)
+      setLoading(false)
+      return
+    }
+    setDbError(false)
+    setInstructors(instrData)
+    setStudents(studData)
     setLoading(false)
   }, [])
 
@@ -46,22 +55,47 @@ export default function Dashboard() {
     setViewDate(d.toISOString().split('T')[0])
   }
 
+  useEffect(() => {
+    function handleKey(e) {
+      const tag = document.activeElement?.tagName
+      if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return
+      if (e.key === 'ArrowLeft') shiftDate(e.shiftKey ? -7 : -1)
+      if (e.key === 'ArrowRight') shiftDate(e.shiftKey ? 7 : 1)
+    }
+    window.addEventListener('keydown', handleKey)
+    return () => window.removeEventListener('keydown', handleKey)
+  }, [viewDate])
+
   function formatViewDate(dateStr) {
     const d = new Date(dateStr + 'T00:00:00')
     return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
   }
 
   const isToday = viewDate === today
+  const [studentFilter, setStudentFilter] = useState('All')
 
   const toAssignmentArray = (s) => s.assignments ? [s.assignments] : []
   const unassigned = students.filter(s => !s.assignments)
 
+  const activeCount = students.filter(s => s.assignments && s.assignments.end_date >= today).length
+  const completedCount = students.filter(s => s.assignments && s.assignments.end_date < today).length
+  const unassignedCount = unassigned.length
+
   const byShift = SHIFTS.reduce((acc, shift) => {
     acc[shift] = students
       .flatMap(s => toAssignmentArray(s).map(a => ({ ...a, student: s })))
-      .filter(a => a.shift === shift && a.start_date <= viewDate && a.end_date >= viewDate)
+      .filter(a => {
+        if (a.shift !== shift) return false
+        if (studentFilter === 'Active') return a.start_date <= viewDate && a.end_date >= today
+        if (studentFilter === 'Completed') return a.end_date < today
+        // All: show whatever is active on the viewDate
+        return a.start_date <= viewDate && a.end_date >= viewDate
+      })
     return acc
   }, {})
+
+  const showSchedule = studentFilter !== 'Unassigned'
+  const showUnassigned = studentFilter === 'All' || studentFilter === 'Unassigned'
 
   const instructorActiveShifts = {}
   students.forEach(s => {
@@ -118,6 +152,25 @@ export default function Dashboard() {
     return {}
   }
 
+  async function unassignStudent(assignmentId) {
+    await fetch(`/api/assignments/${assignmentId}`, { method: 'DELETE' })
+    setEditingAssignment(null)
+    loadData()
+    showToast('Student unassigned')
+  }
+
+  async function patchEndDate(assignmentId, instructorId, shift, startDate, newEndDate) {
+    const res = await fetch(`/api/assignments/${assignmentId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ instructor_id: instructorId, shift, start_date: startDate, end_date: newEndDate }),
+    })
+    if (res.ok) {
+      loadData()
+      showToast('End date updated')
+    }
+  }
+
   async function assignStudent(studentId, instructorId, shift, startDate, endDate) {
     const res = await fetch('/api/assignments', {
       method: 'POST',
@@ -164,6 +217,26 @@ export default function Dashboard() {
         <div className="text-center">
           <div className="w-12 h-12 border-4 border-red-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
           <p className="text-gray-400 text-sm">Loading...</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (dbError) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-black">
+        <div className="text-center max-w-sm px-6">
+          <div className="w-12 h-12 bg-red-600/20 rounded-full flex items-center justify-center mx-auto mb-4">
+            <span className="text-red-500 text-xl font-black">!</span>
+          </div>
+          <p className="text-white font-bold mb-1">Unable to load data</p>
+          <p className="text-gray-400 text-sm mb-5">The database could not be reached. Check that Supabase is active and your connection is working.</p>
+          <button
+            onClick={() => { setDbError(false); setLoading(true); loadData() }}
+            className="px-4 py-2 bg-red-600 text-white text-sm font-bold rounded-lg hover:bg-red-700 transition-colors"
+          >
+            Retry
+          </button>
         </div>
       </div>
     )
@@ -223,11 +296,37 @@ export default function Dashboard() {
               <button onClick={() => setViewDate(today)} className="px-3 py-1.5 text-xs font-bold text-red-600 hover:bg-red-50 rounded-lg border border-red-200 transition-colors">Today</button>
             )}
             {isToday && <span className="text-xs font-bold text-green-600 bg-green-50 px-2 py-1 rounded-lg">Today</span>}
+            <span className="text-xs text-gray-300 hidden sm:inline">← → day &nbsp;·&nbsp; ⇧← ⇧→ week</span>
           </div>
           <div className="flex items-center gap-2">
             <button onClick={() => shiftDate(1)} className="px-3 py-1.5 text-sm text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">Day ›</button>
             <button onClick={() => shiftDate(7)} className="px-3 py-1.5 text-sm font-bold text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors">Next Week →</button>
           </div>
+        </div>
+      </div>
+
+      {/* Student Filter Bar */}
+      <div className="bg-white border-b border-gray-200 px-6 py-2.5">
+        <div className="max-w-7xl mx-auto flex items-center gap-2">
+          <span className="text-xs font-bold text-gray-400 uppercase tracking-wide mr-1">Students</span>
+          {[
+            { label: 'All', count: students.length },
+            { label: 'Active', count: activeCount },
+            { label: 'Completed', count: completedCount },
+            { label: 'Unassigned', count: unassignedCount },
+          ].map(({ label, count }) => (
+            <button
+              key={label}
+              onClick={() => setStudentFilter(label)}
+              className={`text-xs font-bold px-3 py-1.5 rounded-full transition-colors ${
+                studentFilter === label
+                  ? 'bg-gray-900 text-white'
+                  : 'bg-white text-gray-500 hover:bg-gray-100 border border-gray-200'
+              }`}
+            >
+              {label} <span className={`ml-1 ${studentFilter === label ? 'text-gray-300' : 'text-gray-400'}`}>{count}</span>
+            </button>
+          ))}
         </div>
       </div>
 
@@ -247,15 +346,20 @@ export default function Dashboard() {
                   : []
 
                 return (
-                  <div key={instructor.id} className={`bg-white rounded-xl border-l-4 p-5 shadow-sm ${isFull ? 'border-l-red-600' : 'border-l-gray-900'}`}>
+                  <div key={instructor.id} className={`rounded-xl border-l-4 p-5 shadow-sm transition-colors ${isFull ? 'bg-red-50 border-l-red-600' : 'bg-white border-l-gray-900'}`}>
                     <div className="flex items-start justify-between mb-3">
-                      <span className="font-bold text-gray-900">{instructor.name}</span>
-                      <button
-                        onClick={() => setEditingInstructor(instructor)}
-                        className="text-xs text-gray-400 hover:text-red-600 transition-colors"
-                      >
-                        Edit
-                      </button>
+                      <span className={`font-bold ${isFull ? 'text-red-900' : 'text-gray-900'}`}>{instructor.name}</span>
+                      <div className="flex items-center gap-2">
+                        {isFull && (
+                          <span className="text-xs font-black bg-red-600 text-white px-2 py-0.5 rounded-full tracking-wide">FULL</span>
+                        )}
+                        <button
+                          onClick={() => setEditingInstructor(instructor)}
+                          className="text-xs text-gray-400 hover:text-red-600 transition-colors"
+                        >
+                          Edit
+                        </button>
+                      </div>
                     </div>
 
                     <div className="flex flex-wrap gap-1 mb-3">
@@ -267,7 +371,7 @@ export default function Dashboard() {
                           ))
                         : instructor.default_shift
                         ? instructor.default_shift.split(',').map(s => (
-                            <span key={s} className="text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">{s}</span>
+                            <span key={s} className={`text-xs px-2 py-0.5 rounded-full ${isFull ? 'text-red-400 bg-red-100' : 'text-gray-400 bg-gray-100'}`}>{s}</span>
                           ))
                         : <span className="text-xs text-gray-300">No active students</span>
                       }
@@ -275,15 +379,12 @@ export default function Dashboard() {
 
                     <div className="flex items-end justify-between mb-2">
                       <div>
-                        <span className="text-3xl font-black text-gray-900">{viewCount}</span>
-                        <span className="text-sm text-gray-400 ml-1">/ {instructor.capacity}</span>
+                        <span className={`text-3xl font-black ${isFull ? 'text-red-700' : 'text-gray-900'}`}>{viewCount}</span>
+                        <span className={`text-sm ml-1 ${isFull ? 'text-red-400' : 'text-gray-400'}`}>/ {instructor.capacity}</span>
                       </div>
-                      {isFull && (
-                        <span className="text-xs font-bold bg-red-100 text-red-600 px-2 py-0.5 rounded-full">FULL</span>
-                      )}
                     </div>
 
-                    <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                    <div className={`h-2 rounded-full overflow-hidden ${isFull ? 'bg-red-200' : 'bg-gray-100'}`}>
                       <div
                         className={`h-full rounded-full transition-all ${isFull ? 'bg-red-600' : 'bg-gray-900'}`}
                         style={{ width: `${pct}%` }}
@@ -297,7 +398,7 @@ export default function Dashboard() {
         )}
 
         {/* Weekly schedule */}
-        <section>
+        {showSchedule && <section>
           <h2 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-4">
             {isToday ? "Today's Schedule" : `Schedule — ${formatViewDate(viewDate)}`}
           </h2>
@@ -340,26 +441,12 @@ export default function Dashboard() {
                       </div>
                     ) : (
                       assignments.map(assignment => (
-                        <div key={assignment.id} className="px-4 py-3 hover:bg-gray-50 transition-colors">
-                          <div className="flex items-start justify-between">
-                            <div className="font-semibold text-gray-900 text-sm">
-                              {assignment.student.first_name} {assignment.student.last_name}
-                            </div>
-                            <button
-                              onClick={() => setEditingAssignment(assignment)}
-                              className="text-xs text-gray-400 hover:text-red-600 ml-2 shrink-0 transition-colors"
-                            >
-                              Edit
-                            </button>
-                          </div>
-                          <div className="text-xs text-gray-500 mt-0.5">{assignment.instructors?.name}</div>
-                          <div className="text-xs text-gray-400">{assignment.start_date} → {assignment.end_date}</div>
-                          {assignment.student.training_type && (
-                            <span className="inline-block mt-1.5 text-xs font-semibold bg-black text-white px-2 py-0.5 rounded-full">
-                              {assignment.student.training_type}
-                            </span>
-                          )}
-                        </div>
+                        <AssignmentCard
+                          key={assignment.id}
+                          assignment={assignment}
+                          onEdit={() => setEditingAssignment(assignment)}
+                          onPatchEndDate={patchEndDate}
+                        />
                       ))
                     )}
                   </div>
@@ -367,34 +454,59 @@ export default function Dashboard() {
               )
             })}
           </div>
-        </section>
+        </section>}
 
         {/* Unassigned students */}
-        {unassigned.length > 0 && (
+        {showUnassigned && unassigned.length > 0 && (
           <section>
-            <h2 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-4">
-              Unassigned Students ({unassigned.length})
-            </h2>
+            {instructors.length > 0 && instructors.every(i => instructorViewCounts[i.id] >= i.capacity) && (
+              <div className="flex items-center gap-3 bg-red-50 border border-red-200 rounded-xl px-4 py-3 mb-4">
+                <span className="text-red-600 font-black text-lg leading-none">!</span>
+                <p className="text-sm text-red-700 font-medium">All instructors are at full capacity. Increase an instructor's limit before assigning new students.</p>
+              </div>
+            )}
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xs font-bold text-gray-500 uppercase tracking-widest">
+                Unassigned Students ({unassigned.length})
+              </h2>
+              {unassigned.length > 4 && (
+                <input
+                  type="text"
+                  placeholder="Search..."
+                  value={unassignedSearch}
+                  onChange={e => setUnassignedSearch(e.target.value)}
+                  className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-red-500 w-44"
+                />
+              )}
+            </div>
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 divide-y divide-gray-100">
-              {unassigned.map(student => (
-                <div key={student.id} className="flex items-center justify-between px-5 py-3 hover:bg-gray-50 transition-colors">
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 bg-red-600 text-white rounded-full flex items-center justify-center text-xs font-bold shrink-0">
-                      {student.first_name[0]}{student.last_name[0]}
+              {unassigned
+                .filter(s => `${s.first_name} ${s.last_name}`.toLowerCase().includes(unassignedSearch.toLowerCase()))
+                .map(student => (
+                  <div key={student.id} className="flex items-center justify-between px-5 py-3 hover:bg-gray-50 transition-colors">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 bg-red-600 text-white rounded-full flex items-center justify-center text-xs font-bold shrink-0">
+                        {student.first_name[0]}{student.last_name[0]}
+                      </div>
+                      <div>
+                        <div className="text-sm font-semibold text-gray-900">{student.first_name} {student.last_name}</div>
+                        <div className="text-xs text-gray-400">
+                          {student.training_type && <span>{student.training_type}</span>}
+                          {student.training_type && (student.phone || student.email) && <span className="mx-1">·</span>}
+                          {student.phone && <span>{student.phone}</span>}
+                          {student.phone && student.email && <span className="mx-1">·</span>}
+                          {student.email && <span>{student.email}</span>}
+                        </div>
+                      </div>
                     </div>
-                    <div>
-                      <div className="text-sm font-semibold text-gray-900">{student.first_name} {student.last_name}</div>
-                      {student.training_type && <div className="text-xs text-gray-400">{student.training_type}</div>}
-                    </div>
+                    <button
+                      onClick={() => setAssigningStudent(student)}
+                      className="text-xs font-bold text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100 px-3 py-1.5 rounded-lg transition-colors"
+                    >
+                      Assign →
+                    </button>
                   </div>
-                  <button
-                    onClick={() => setAssigningStudent(student)}
-                    className="text-xs font-bold text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100 px-3 py-1.5 rounded-lg transition-colors"
-                  >
-                    Assign →
-                  </button>
-                </div>
-              ))}
+                ))}
             </div>
           </section>
         )}
@@ -431,6 +543,7 @@ export default function Dashboard() {
           assignment={editingAssignment}
           instructors={instructors}
           onSave={updateAssignment}
+          onUnassign={unassignStudent}
           onClose={() => setEditingAssignment(null)}
         />
       )}
@@ -439,6 +552,74 @@ export default function Dashboard() {
         <div className={`fixed bottom-6 right-6 z-50 px-4 py-3 rounded-xl shadow-lg text-sm font-semibold text-white transition-all ${toast.type === 'error' ? 'bg-red-600' : 'bg-gray-900'}`}>
           {toast.message}
         </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Assignment Card ──────────────────────────────────────────────────────────
+
+function AssignmentCard({ assignment, onEdit, onPatchEndDate }) {
+  const [editingEnd, setEditingEnd] = useState(false)
+  const [endDate, setEndDate] = useState(assignment.end_date)
+
+  function handleEndDateChange(e) {
+    const val = e.target.value
+    if (!val) return
+    setEndDate(val)
+    setEditingEnd(false)
+    if (val !== assignment.end_date) {
+      onPatchEndDate(assignment.id, assignment.instructor_id, assignment.shift, assignment.start_date, val)
+    }
+  }
+
+  return (
+    <div className="px-4 py-3 hover:bg-gray-50 transition-colors">
+      <div className="flex items-start justify-between">
+        <div className="font-semibold text-gray-900 text-sm">
+          {assignment.student.first_name} {assignment.student.last_name}
+        </div>
+        <button
+          onClick={onEdit}
+          className="text-xs text-gray-400 hover:text-red-600 ml-2 shrink-0 transition-colors"
+        >
+          Edit
+        </button>
+      </div>
+      <div className="text-xs text-gray-500 mt-0.5">{assignment.instructors?.name}</div>
+      {(assignment.student.phone || assignment.student.email) && (
+        <div className="text-xs text-gray-400 mt-0.5">
+          {assignment.student.phone && <span>{assignment.student.phone}</span>}
+          {assignment.student.phone && assignment.student.email && <span className="mx-1">·</span>}
+          {assignment.student.email && <span>{assignment.student.email}</span>}
+        </div>
+      )}
+      <div className="flex items-center gap-1 mt-0.5">
+        <span className="text-xs text-gray-400">{assignment.start_date} →</span>
+        {editingEnd ? (
+          <input
+            type="date"
+            defaultValue={endDate}
+            min={assignment.start_date}
+            autoFocus
+            onBlur={handleEndDateChange}
+            onChange={handleEndDateChange}
+            className="text-xs border border-red-400 rounded px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-red-500"
+          />
+        ) : (
+          <button
+            onClick={() => setEditingEnd(true)}
+            className="text-xs text-gray-400 hover:text-red-600 hover:underline transition-colors"
+            title="Click to edit end date"
+          >
+            {endDate}
+          </button>
+        )}
+      </div>
+      {assignment.student.training_type && (
+        <span className="inline-block mt-1.5 text-xs font-semibold bg-black text-white px-2 py-0.5 rounded-full">
+          {assignment.student.training_type}
+        </span>
       )}
     </div>
   )
@@ -659,13 +840,14 @@ function AssignModal({ student, instructors, onAssign, onClose }) {
 
 // ─── Edit Assignment Modal ────────────────────────────────────────────────────
 
-function EditAssignmentModal({ assignment, instructors, onSave, onClose }) {
+function EditAssignmentModal({ assignment, instructors, onSave, onUnassign, onClose }) {
   const [selectedInstructor, setSelectedInstructor] = useState(assignment.instructor_id)
   const [shift, setShift] = useState(assignment.shift)
   const [startDate, setStartDate] = useState(assignment.start_date)
   const [endDate, setEndDate] = useState(assignment.end_date)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
+  const [confirmUnassign, setConfirmUnassign] = useState(false)
 
   async function handleSubmit(e) {
     e.preventDefault()
@@ -686,17 +868,46 @@ function EditAssignmentModal({ assignment, instructors, onSave, onClose }) {
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
         </div>
         <div className="px-6 py-5">
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <Field label="Shift" placeholder="">
-              <select value={shift} onChange={e => setShift(e.target.value)} required className={inputClass}>
-                {SHIFTS.map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
-            </Field>
-            <InstructorPicker instructors={instructors} selected={selectedInstructor} currentId={assignment.instructor_id} onChange={setSelectedInstructor} />
-            <DateRangePicker startDate={startDate} endDate={endDate} onStart={setStartDate} onEnd={setEndDate} />
-            {error && <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{error}</p>}
-            <SubmitButton submitting={submitting} label="Save Changes" />
-          </form>
+          {confirmUnassign ? (
+            <div className="space-y-4">
+              <p className="text-sm text-gray-600">
+                Remove <span className="font-semibold text-gray-900">{assignment.student?.first_name} {assignment.student?.last_name}</span> from their assignment? They will appear in the unassigned list.
+              </p>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setConfirmUnassign(false)}
+                  className="flex-1 border border-gray-200 text-gray-700 rounded-lg py-2.5 text-sm font-bold hover:bg-gray-50 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => onUnassign(assignment.id)}
+                  className="flex-1 bg-red-600 text-white rounded-lg py-2.5 text-sm font-bold hover:bg-red-700 transition-colors"
+                >
+                  Unassign
+                </button>
+              </div>
+            </div>
+          ) : (
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <Field label="Shift" placeholder="">
+                <select value={shift} onChange={e => setShift(e.target.value)} required className={inputClass}>
+                  {SHIFTS.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </Field>
+              <InstructorPicker instructors={instructors} selected={selectedInstructor} currentId={assignment.instructor_id} onChange={setSelectedInstructor} />
+              <DateRangePicker startDate={startDate} endDate={endDate} onStart={setStartDate} onEnd={setEndDate} />
+              {error && <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{error}</p>}
+              <SubmitButton submitting={submitting} label="Save Changes" />
+              <button
+                type="button"
+                onClick={() => setConfirmUnassign(true)}
+                className="w-full text-sm font-bold text-gray-400 hover:text-red-600 py-2 transition-colors"
+              >
+                Unassign student
+              </button>
+            </form>
+          )}
         </div>
       </div>
     </div>
