@@ -23,10 +23,12 @@ export async function PATCH(request, { params }) {
       .eq('id', instructor_id)
       .single()
 
+    const today = new Date().toISOString().split('T')[0]
     const { count } = await supabase
       .from('assignments')
       .select('*', { count: 'exact', head: true })
       .eq('instructor_id', instructor_id)
+      .gte('end_date', today)
 
     if (count >= instructor.capacity) {
       return NextResponse.json({ error: 'Instructor is at full capacity' }, { status: 409 })

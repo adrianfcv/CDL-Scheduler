@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
 
-const SHIFTS = ['Morning', 'Afternoon', 'Evening', 'Saturday', 'Sunrise']
+const SHIFTS = ['Morning', 'Afternoon', 'Evening', 'Sunrise/Saturday']
 const TRAINING_TYPES = ['Class A', 'Refresher', 'Gooseneck', 'Other']
 
 export default function Dashboard() {
@@ -171,6 +171,24 @@ export default function Dashboard() {
     }
   }
 
+  async function completeAssignment(assignment) {
+    const yesterday = new Date()
+    yesterday.setDate(yesterday.getDate() - 1)
+    const yesterdayStr = yesterday.toISOString().split('T')[0]
+    await fetch(`/api/assignments/${assignment.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        instructor_id: assignment.instructor_id,
+        shift: assignment.shift,
+        start_date: assignment.start_date,
+        end_date: yesterdayStr,
+      }),
+    })
+    loadData()
+    showToast(`${assignment.student.first_name} ${assignment.student.last_name} marked as complete`)
+  }
+
   async function assignStudent(studentId, instructorId, shift, startDate, endDate) {
     const res = await fetch('/api/assignments', {
       method: 'POST',
@@ -209,6 +227,44 @@ export default function Dashboard() {
     loadData()
     showToast('Student added successfully')
     return {}
+  }
+
+  function exportSchedule() {
+    const assigned = students
+      .filter(s => s.assignments)
+      .map(s => {
+        const a = s.assignments
+        const status = a.end_date >= today ? 'Active' : 'Completed'
+        return {
+          shift: a.shift,
+          name: `${s.first_name} ${s.last_name}`,
+          phone: s.phone || '',
+          email: s.email || '',
+          training_type: s.training_type || '',
+          instructor: a.instructors?.name || '',
+          start_date: a.start_date,
+          end_date: a.end_date,
+          status,
+        }
+      })
+      .sort((a, b) => {
+        const shiftDiff = SHIFTS.indexOf(a.shift) - SHIFTS.indexOf(b.shift)
+        if (shiftDiff !== 0) return shiftDiff
+        return a.status === 'Active' ? -1 : 1
+      })
+
+    const rows = [
+      ['Shift', 'Student Name', 'Phone', 'Email', 'Training Type', 'Instructor', 'Start Date', 'End Date', 'Status'],
+      ...assigned.map(a => [a.shift, a.name, a.phone, a.email, a.training_type, a.instructor, a.start_date, a.end_date, a.status]),
+    ]
+    const csv = rows.map(r => r.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(',')).join('\n')
+    const blob = new Blob([csv], { type: 'text/csv' })
+    const url = URL.createObjectURL(blob)
+    const el = document.createElement('a')
+    el.href = url
+    el.download = `schedule-${today}.csv`
+    el.click()
+    URL.revokeObjectURL(url)
   }
 
   if (loading) {
@@ -301,6 +357,7 @@ export default function Dashboard() {
           <div className="flex items-center gap-2">
             <button onClick={() => shiftDate(1)} className="px-3 py-1.5 text-sm text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">Day ›</button>
             <button onClick={() => shiftDate(7)} className="px-3 py-1.5 text-sm font-bold text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors">Next Week →</button>
+            <button onClick={exportSchedule} className="px-3 py-1.5 text-sm font-bold border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50 hover:border-gray-300 transition-colors" title="Export schedule to CSV">↓ CSV</button>
           </div>
         </div>
       </div>
@@ -446,6 +503,7 @@ export default function Dashboard() {
                           assignment={assignment}
                           onEdit={() => setEditingAssignment(assignment)}
                           onPatchEndDate={patchEndDate}
+                          onComplete={completeAssignment}
                         />
                       ))
                     )}
@@ -559,9 +617,10 @@ export default function Dashboard() {
 
 // ─── Assignment Card ──────────────────────────────────────────────────────────
 
-function AssignmentCard({ assignment, onEdit, onPatchEndDate }) {
+function AssignmentCard({ assignment, onEdit, onPatchEndDate, onComplete }) {
   const [editingEnd, setEditingEnd] = useState(false)
   const [endDate, setEndDate] = useState(assignment.end_date)
+  const [confirmComplete, setConfirmComplete] = useState(false)
 
   function handleEndDateChange(e) {
     const val = e.target.value
@@ -579,12 +638,41 @@ function AssignmentCard({ assignment, onEdit, onPatchEndDate }) {
         <div className="font-semibold text-gray-900 text-sm">
           {assignment.student.first_name} {assignment.student.last_name}
         </div>
-        <button
-          onClick={onEdit}
-          className="text-xs text-gray-400 hover:text-red-600 ml-2 shrink-0 transition-colors"
-        >
-          Edit
-        </button>
+        <div className="flex items-center gap-2 ml-2 shrink-0">
+          {confirmComplete ? (
+            <>
+              <span className="text-xs text-gray-500">Done?</span>
+              <button
+                onClick={() => { setConfirmComplete(false); onComplete(assignment) }}
+                className="text-xs font-bold text-green-600 hover:text-green-700 transition-colors"
+              >
+                Yes
+              </button>
+              <button
+                onClick={() => setConfirmComplete(false)}
+                className="text-xs text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                Cancel
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                onClick={() => setConfirmComplete(true)}
+                className="text-xs text-gray-400 hover:text-green-600 transition-colors"
+                title="Mark training as complete"
+              >
+                ✓
+              </button>
+              <button
+                onClick={onEdit}
+                className="text-xs text-gray-400 hover:text-red-600 transition-colors"
+              >
+                Edit
+              </button>
+            </>
+          )}
+        </div>
       </div>
       <div className="text-xs text-gray-500 mt-0.5">{assignment.instructors?.name}</div>
       {(assignment.student.phone || assignment.student.email) && (

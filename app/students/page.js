@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
 
-const SHIFTS = ['Morning', 'Afternoon', 'Evening', 'Saturday', 'Sunrise']
+const SHIFTS = ['Morning', 'Afternoon', 'Evening', 'Sunrise/Saturday']
 const TRAINING_TYPES = ['Class A', 'Class B', 'Refresher', 'Hazmat']
 
 export default function StudentsPage() {
@@ -111,6 +111,35 @@ export default function StudentsPage() {
     loadData()
     showToast(a ? 'Assignment updated' : 'Student assigned successfully')
     return {}
+  }
+
+  function exportCSV() {
+    const rows = [
+      ['First Name', 'Last Name', 'Phone', 'Email', 'Training Type', 'Status', 'Instructor', 'Shift', 'Start Date', 'End Date'],
+      ...sorted.map(s => {
+        const a = s.assignments
+        return [
+          s.first_name,
+          s.last_name,
+          s.phone || '',
+          s.email || '',
+          s.training_type || '',
+          getStatus(s),
+          a?.instructors?.name || '',
+          a?.shift || '',
+          a?.start_date || '',
+          a?.end_date || '',
+        ]
+      }),
+    ]
+    const csv = rows.map(r => r.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(',')).join('\n')
+    const blob = new Blob([csv], { type: 'text/csv' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `students-${new Date().toISOString().split('T')[0]}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
   }
 
   const filtered = students.filter(s => {
@@ -221,17 +250,26 @@ export default function StudentsPage() {
               ))}
             </div>
           </div>
-          <input
-            type="text"
-            placeholder="Search by name..."
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500 w-56 bg-white"
-          />
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              placeholder="Search by name..."
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500 w-56 bg-white"
+            />
+            <button
+              onClick={exportCSV}
+              className="px-3 py-2 text-sm font-bold border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50 hover:border-gray-300 transition-colors bg-white"
+              title="Export current view to CSV"
+            >
+              ↓ CSV
+            </button>
+          </div>
         </div>
 
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-          <table className="w-full text-sm">
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-x-auto">
+          <table className="w-full text-sm min-w-[800px]">
             <thead>
               <tr className="bg-black text-white">
                 <th className="text-left px-5 py-3 text-xs font-bold uppercase tracking-wide">Name</th>

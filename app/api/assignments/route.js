@@ -17,11 +17,13 @@ export async function POST(request) {
 
   if (instructorError) return NextResponse.json({ error: 'Instructor not found' }, { status: 404 })
 
-  // Count current assignments for this instructor
+  // Count active assignments for this instructor (exclude completed)
+  const today = new Date().toISOString().split('T')[0]
   const { count, error: countError } = await supabase
     .from('assignments')
     .select('*', { count: 'exact', head: true })
     .eq('instructor_id', instructor_id)
+    .gte('end_date', today)
 
   if (countError) return NextResponse.json({ error: countError.message }, { status: 500 })
 

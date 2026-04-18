@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
 
-const SHIFTS = ['Morning', 'Afternoon', 'Evening', 'Saturday', 'Sunrise']
+const SHIFTS = ['Morning', 'Afternoon', 'Evening', 'Sunrise/Saturday']
 
 export default function InstructorsPage() {
   const [instructors, setInstructors] = useState([])
